@@ -15,10 +15,35 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <stdbool.h>
+
+#include <sys/__messag.h>
 
 static void *handle_console(void *args) {
 
-  printf("test\n");
+  printf("starting the console listener\n");
+
+  while (true) {
+
+    struct __cons_msg2 cons = {0};
+    cons.__cm2_format = __CONSOLE_FORMAT_3;
+
+    char mod_cmd[128] = {0};
+    int cmd_type = 0;
+
+    if (__console2(&cons, mod_cmd, &cmd_type)) {
+      fprintf(stderr, "__console2(): %s\n", strerror(errno));
+      pthread_exit(NULL);
+    }
+
+    if (cmd_type == _CC_modify) {
+      printf("console command = \'%s\'\n", mod_cmd);
+    } else if (cmd_type == _CC_stop) {
+      printf("termination command sent\n");
+      break;
+    }
+
+  }
 
   return NULL;
 }
