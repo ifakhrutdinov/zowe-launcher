@@ -205,10 +205,12 @@ static void *handle_comp_comm(void *args) {
       ERROR("waitpid failed for %s(%d) - %s\n",
             comp->name, comp->pid, strerror(errno));
       break;
+    } else {
+//      DEBUG("waitpid RC = 0 for %s(%d)\n", comp->name, comp->pid);
     }
 
     char msg[1024];
-    int retries_left = 10;
+    int retries_left = 3;
     while (retries_left > 0) {
 
       int msg_len = read(comp->output, msg, sizeof(msg));
@@ -222,10 +224,11 @@ static void *handle_comp_comm(void *args) {
           next_line = strtok(NULL, "\n");
         }
 
-        retries_left = 10;
+        retries_left = 3;
       } else if (msg_len == -1 && errno == EAGAIN) {
         sleep(1);
         retries_left--;
+//        DEBUG("waiting for next message from %s(%d)\n", comp->name, comp->pid);
       } else {
         ERROR("cannot read output from comp %s(%d) failed - %s\n",
               comp->name, comp->pid, strerror(errno));
@@ -357,8 +360,8 @@ static int stop_component(Component *comp) {
     return -1;
   }
 
-  INFO("component %s(%d) stopped\n", comp->name, comp->pid);
   comp->pid = -1;
+  INFO("component %s stopped\n", comp->name);
 
   return 0;
 }
@@ -421,6 +424,17 @@ static int handle_stop(const char *comp_name) {
   }
 
   stop_component(comp);
+
+  return 0;
+}
+
+static int handle_disp(void) {
+
+  INFO("launcher has the following components:\n");
+  for (int i = 0; i < context.count; i++) {
+    INFO("    name = %16.16s, PID = %d\n", context.children[i].name,
+         context.children[i].pid);
+  }
 
   return 0;
 }
@@ -490,12 +504,7 @@ static void *handle_console(void *args) {
           ERROR("bad value, command ignored\n");
         }
       } else if (strstr(mod_cmd, CMD_DISP) == mod_cmd) {
-        char *val = get_cmd_val(mod_cmd, cmd_val, sizeof(cmd_val));
-        if (val != NULL) {
-          handle_stop(val);
-        } else {
-          ERROR("bad value, command ignored\n");
-        }
+        handle_disp();
       } else {
         WARN("command not recognized\n");
       }

@@ -6,7 +6,11 @@ ls .
 
 java foobar
 
-sleep 3600
+while true
+do
+  echo "Doing shell script component test 2"
+  sleep 10
+done
 
 echo "leaving shell test 2"
 
