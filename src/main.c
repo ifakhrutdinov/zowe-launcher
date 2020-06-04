@@ -45,10 +45,10 @@
 
 // a REST endpoint? Zowe CLI?
 
-#define INFO($fmt, ...)   printf("INFO:  "$fmt, ##__VA_ARGS__)
-#define WARN($fmt, ...)   printf("WARN:  "$fmt, ##__VA_ARGS__)
-#define DEBUG($fmt, ...)  printf("DEBUG: "$fmt, ##__VA_ARGS__)
-#define ERROR($fmt, ...)  printf("ERROR: "$fmt, ##__VA_ARGS__)
+#define INFO(fmt, ...)    printf("INFO:  "fmt, ##__VA_ARGS__)
+#define WARN(fmt, ...)    printf("WARN:  "fmt, ##__VA_ARGS__)
+#define DEBUG(fmt, ...)   printf("DEBUG: "fmt, ##__VA_ARGS__)
+#define ERROR(fmt, ...)   printf("ERROR: "fmt, ##__VA_ARGS__)
 
 typedef struct Component {
 
@@ -158,11 +158,10 @@ static int load_cfg(void) {
 
   char *line;
   char buff[1024];
-  ssize_t read;
 
   while ((line = fgets(buff, sizeof(buff), cfg)) != NULL) {
 
-    for (int i = 0; i < strlen(line); i++) {
+    for (size_t i = 0; i < strlen(line); i++) {
       if (line[i] == '\n') {
         line[i] = ' ';
       }
@@ -433,7 +432,7 @@ static int handle_stop(const char *comp_name) {
 static int handle_disp(void) {
 
   INFO("launcher has the following components:\n");
-  for (int i = 0; i < context.count; i++) {
+  for (size_t i = 0; i < context.count; i++) {
     INFO("    name = %16.16s, PID = %d\n", context.children[i].name,
          context.children[i].pid);
   }
