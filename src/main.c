@@ -9,22 +9,24 @@
   Copyright Contributors to the Zowe Project.
 */
 
-#include <pthread.h>
+#include <ctype.h>
+#include <limits.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
-#include <stdbool.h>
-#include <limits.h>
-#include <ctype.h>
-#include <signal.h>
 
-#include <sys/__messag.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <spawn.h>
+#include <time.h>
+
+#include <pthread.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <sys/__messag.h>
+#include <unistd.h>
 
 //  //ZLAUNCH  JOB  USER=&SYSUID,NOTIFY=&SYSUID
 //  //ZLAUNCH  EXEC PGM=ZLAUNCH,REGION=0M,
@@ -45,12 +47,31 @@
 
 // a REST endpoint? Zowe CLI?
 
-#define INFO(fmt, ...)    printf("INFO:  "fmt, ##__VA_ARGS__)
-#define WARN(fmt, ...)    printf("WARN:  "fmt, ##__VA_ARGS__)
-#define DEBUG(fmt, ...)   printf("DEBUG: "fmt, ##__VA_ARGS__)
-#define ERROR(fmt, ...)   printf("ERROR: "fmt, ##__VA_ARGS__)
+typedef struct ZlTime {
+  char value[32];
+} ZlTime;
 
-typedef struct Component {
+static ZlTime gettime(void) {
+
+  time_t t = time(NULL);
+  const char *format = "%Y-%m-%d %H:%M:%S";
+
+  struct tm lt;
+  ZlTime result;
+
+  localtime_r(&t, &lt);
+
+  strftime(result.value, sizeof(result.value), format, &lt);
+
+  return result;
+}
+
+#define INFO(fmt, ...)  printf("%s INFO:  "fmt, gettime().value, ##__VA_ARGS__)
+#define WARN(fmt, ...)  printf("%s WARN:  "fmt, gettime().value, ##__VA_ARGS__)
+#define DEBUG(fmt, ...) printf("%s DEBUG: "fmt, gettime().value, ##__VA_ARGS__)
+#define ERROR(fmt, ...) printf("%s ERROR: "fmt, gettime().value, ##__VA_ARGS__)
+
+typedef struct ZlComp {
 
   char name[32];
   char bin[_POSIX_PATH_MAX + 1];
@@ -59,15 +80,16 @@ typedef struct Component {
 
   pthread_t comm_thid;
 
-} Component;
+} ZlComp;
 
+// TODO globals are bad, make this a context struct and pass around
 struct {
 
   pthread_t console_thid;
 
 #define MAX_CHILD_COUNT 128
 
-  Component children[MAX_CHILD_COUNT];
+  ZlComp children[MAX_CHILD_COUNT];
   size_t count;
 
   char workdir[_POSIX_PATH_MAX + 1];
@@ -107,7 +129,7 @@ static int init_context(void) {
   return 0;
 }
 
-static int init_component(const char *cfg_line, Component *result) {
+static int init_component(const char *cfg_line, ZlComp *result) {
 
   const char *comp_start = cfg_line;
   const char *comp_end = strchr(cfg_line, '=');
@@ -168,7 +190,7 @@ static int load_cfg(void) {
     }
 
     DEBUG("handling line \'%s\'\n", line);
-    Component comp = {0};
+    ZlComp comp = {0};
     if (!init_component(line, &comp)) {
       if (context.count != MAX_CHILD_COUNT) {
         context.children[context.count++] = comp;
@@ -191,7 +213,7 @@ static void *handle_comp_comm(void *args) {
 
   INFO("starting a component communication thread\n");
 
-  Component *comp = args;
+  ZlComp *comp = args;
 
   while (true) {
 
@@ -221,7 +243,8 @@ static void *handle_comp_comm(void *args) {
         char *next_line = strtok(msg, "\n");
 
         while (next_line) {
-          printf("%s(%d): %s\n", comp->name, comp->pid, next_line);
+          char *tm = gettime().value;
+          printf("%s %s(%d): %s\n", tm, comp->name, comp->pid, next_line);
           next_line = strtok(NULL, "\n");
         }
 
@@ -242,7 +265,7 @@ static void *handle_comp_comm(void *args) {
   return NULL;
 }
 
-static int start_component(Component *comp) {
+static int start_component(ZlComp *comp) {
 
   if (comp->pid != -1) {
     ERROR("cannot start component %s - already running\n", comp->name);
@@ -340,7 +363,7 @@ static int start_components(void) {
   return rc;
 }
 
-static int stop_component(Component *comp) {
+static int stop_component(ZlComp *comp) {
 
   if (comp->pid == -1) {
     return 0;
@@ -388,7 +411,7 @@ static int stop_components(void) {
   return 0;
 }
 
-static Component *find_comp(const char *name) {
+static ZlComp *find_comp(const char *name) {
 
   for (size_t i = 0; i < context.count; i++) {
     if (!strcmp(name, context.children[i].name)) {
@@ -405,7 +428,7 @@ static Component *find_comp(const char *name) {
 
 static int handle_start(const char *comp_name) {
 
-  Component *comp = find_comp(comp_name);
+  ZlComp *comp = find_comp(comp_name);
   if (comp == NULL) {
     WARN("component %s not found\n", comp_name);
     return -1;
@@ -418,7 +441,7 @@ static int handle_start(const char *comp_name) {
 
 static int handle_stop(const char *comp_name) {
 
-  Component *comp = find_comp(comp_name);
+  ZlComp *comp = find_comp(comp_name);
   if (comp == NULL) {
     WARN("component %s not found\n", comp_name);
     return -1;
