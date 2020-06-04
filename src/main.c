@@ -43,6 +43,8 @@
 //  /*
 //
 
+// a REST endpoint? Zowe CLI?
+
 #define INFO($fmt, ...)   printf("INFO:  "$fmt, ##__VA_ARGS__)
 #define WARN($fmt, ...)   printf("WARN:  "$fmt, ##__VA_ARGS__)
 #define DEBUG($fmt, ...)  printf("DEBUG: "$fmt, ##__VA_ARGS__)
