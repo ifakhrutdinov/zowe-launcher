@@ -43,17 +43,17 @@
 //  /*
 //
 
+#define INFO($fmt, ...)   printf("INFO:  "$fmt, ##__VA_ARGS__)
+#define WARN($fmt, ...)   printf("WARN:  "$fmt, ##__VA_ARGS__)
+#define DEBUG($fmt, ...)  printf("DEBUG: "$fmt, ##__VA_ARGS__)
+#define ERROR($fmt, ...)  printf("ERROR: "$fmt, ##__VA_ARGS__)
+
 typedef struct Component {
 
   char name[32];
   char bin[_POSIX_PATH_MAX + 1];
   pid_t pid;
   int output;
-
-#define COMP_STATUS_NA      0xfffffff
-#define COMP_STATUS_RUNNING 0x0000001
-#define COMP_STATUS_STOPPED 0x0000002
-  int status;
 
   pthread_t comm_thid;
 
@@ -76,7 +76,7 @@ static int init_context(void) {
 
   const char *workdir = getenv("WORKDIR");
   if (workdir == NULL) {
-    fprintf(stderr, "WORKDIR env variable not found\n");
+    ERROR("WORKDIR env variable not found\n");
     return -1;
   }
 
@@ -88,7 +88,7 @@ static int init_context(void) {
 
   size_t dir_len = dir_end - dir_start + 1;
   if (dir_len > sizeof(context.workdir) - 1) {
-    fprintf(stderr, "WORKDIR env too large\n");
+    ERROR("WORKDIR env too large\n");
     return -1;
   }
 
@@ -96,11 +96,11 @@ static int init_context(void) {
   memcpy(context.workdir, dir_start, dir_len);
 
   if (chdir(context.workdir)) {
-    fprintf(stderr, "working directory not changed: %s\n", strerror(errno));
+    ERROR("working directory not changed - %s\n", strerror(errno));
     return -1;
   }
 
-  printf("work directory is \'%s\'\n", context.workdir);
+  DEBUG("work directory is \'%s\'\n", context.workdir);
 
   return 0;
 }
@@ -111,13 +111,13 @@ static int init_component(const char *cfg_line, Component *result) {
   const char *comp_end = strchr(cfg_line, '=');
 
   if (comp_end == NULL) {
-    fprintf(stderr, "bad config (equal sign not found): \'%s\'\n", cfg_line);
+    ERROR("bad config (equal sign not found): \'%s\'\n", cfg_line);
     return -1;
   }
 
   size_t comp_len = comp_end - comp_start;
   if (comp_len > sizeof(result->name) - 1) {
-    fprintf(stderr, "bad config (component too long): \'%s\'\n", cfg_line);
+    ERROR("bad config (component too long): \'%s\'\n", cfg_line);
     return -1;
   }
 
@@ -129,7 +129,7 @@ static int init_component(const char *cfg_line, Component *result) {
 
   size_t bin_len = bin_end - bin_start;
   if (bin_len > sizeof(result->bin) - 1) {
-    fprintf(stderr, "bad config (bin too long): \'%s\'\n", cfg_line);
+    ERROR("bad config (bin too long): \'%s\'\n", cfg_line);
     return -1;
   }
 
@@ -140,7 +140,7 @@ static int init_component(const char *cfg_line, Component *result) {
   memcpy(result->name, comp_start, comp_len);
   memcpy(result->bin, bin_start, bin_len);
 
-  printf("new component init'd \'%s\', \'%s\'\n", result->name, result->bin);
+  INFO("new component init'd \'%s\', \'%s\'\n", result->name, result->bin);
 
   return 0;
 }
@@ -150,7 +150,7 @@ static int load_cfg(void) {
   FILE *cfg;
 
   if ((cfg = fopen("components.conf", "r")) == NULL) {
-    fprintf(stderr, "components config file not open: %s\n", strerror(errno));
+    ERROR("components config file not open - %s\n", strerror(errno));
     return -1;
   }
 
@@ -159,19 +159,26 @@ static int load_cfg(void) {
   ssize_t read;
 
   while ((line = fgets(buff, sizeof(buff), cfg)) != NULL) {
-    printf("handling line \'%s\'\n", line);
+
+    for (int i = 0; i < strlen(line); i++) {
+      if (line[i] == '\n') {
+        line[i] = ' ';
+      }
+    }
+
+    DEBUG("handling line \'%s\'\n", line);
     Component comp = {0};
     if (!init_component(line, &comp)) {
       if (context.count != MAX_CHILD_COUNT) {
         context.children[context.count++] = comp;
       } else {
-        fprintf(stderr, "max component number reached, ignoring the rest\n");
+        ERROR("max component number reached, ignoring the rest\n");
         break;
       }
     }
   }
 
-  printf("reading config finished - %s\n", strerror(errno));
+  DEBUG("reading config finished - %s\n", strerror(errno));
 
   fclose(cfg);
   cfg = NULL;
@@ -181,24 +188,22 @@ static int load_cfg(void) {
 
 static void *handle_comp_comm(void *args) {
 
-  printf("starting a component communication thread\n");
+  INFO("starting a component communication thread\n");
 
   Component *comp = args;
-
-  comp->status = COMP_STATUS_RUNNING;
 
   while (true) {
 
     int comp_status = 0;
     int wait_rc = waitpid(comp->pid, &comp_status, WNOHANG);
     if (wait_rc == comp->pid) {
-      printf("component \'%s\' with PID = %d terminated, status = %d\n",
-             comp->name, comp->pid, comp_status);
+      INFO("component %s(%d) terminated, status = %d\n",
+           comp->name, comp->pid, comp_status);
       comp->pid = -1;
       break;
     } else if (wait_rc == -1) {
-      fprintf(stderr, "waitpid failed for \'%s\'(%d): %s\n",
-              comp->name, comp->pid, strerror(errno));
+      ERROR("waitpid failed for %s(%d) - %s\n",
+            comp->name, comp->pid, strerror(errno));
       break;
     }
 
@@ -209,14 +214,21 @@ static void *handle_comp_comm(void *args) {
       int msg_len = read(comp->output, msg, sizeof(msg));
       if (msg_len > 0) {
         msg[msg_len] = '\0';
-        printf("%s", msg);
+
+        char *next_line = strtok(msg, "\n");
+
+        while (next_line) {
+          printf("%s(%d): %s\n", comp->name, comp->pid, next_line);
+          next_line = strtok(NULL, "\n");
+        }
+
         retries_left = 10;
       } else if (msg_len == -1 && errno == EAGAIN) {
         sleep(1);
         retries_left--;
       } else {
-        fprintf(stderr, "cannot read output from comp \'%s\'(%d) failed: %s\n",
-                comp->name, comp->pid, strerror(errno));
+        ERROR("cannot read output from comp %s(%d) failed - %s\n",
+              comp->name, comp->pid, strerror(errno));
       }
 
     }
@@ -229,19 +241,17 @@ static void *handle_comp_comm(void *args) {
 static int start_component(Component *comp) {
 
   if (comp->pid != -1) {
-    fprintf(stderr, "cannot start component \'%s\' - running\n", comp->name);
+    ERROR("cannot start component %s - already running\n", comp->name);
     return -1;
   }
 
-  comp->status = COMP_STATUS_NA;
-
-  printf("about to start component \'%s\'\n", comp->name);
+  DEBUG("about to start component %s\n", comp->name);
 
   size_t workdir_len = strlen(context.workdir);
   size_t bin_len = strlen(comp->bin);
 
   if (workdir_len + bin_len > _POSIX_PATH_MAX) {
-    fprintf(stderr, "bin name \'%s\' too long\n", comp->bin);
+    ERROR("bin name \'%s\' too long\n", comp->bin);
     return -1;
   }
 
@@ -250,20 +260,19 @@ static int start_component(Component *comp) {
   strcat(full_path, "/");
   strcat(full_path, comp->bin);
 
-  printf("about to start component \'%s\' at \'%s\'\n",
-         comp->name, full_path);
+  DEBUG("about to start component %s at \'%s\'\n", comp->name, full_path);
 
   struct inheritance inherit = {0};
 
   FILE *script = NULL;
   int c_stdout[2];
   if (pipe(c_stdout)) {
-    fprintf(stderr, "pipe(): %s\n", strerror(errno));
+    ERROR("pipe() failed for %s - %s\n", comp->name, strerror(errno));
     return -1;
   }
 
   if (fcntl(c_stdout[0], F_SETFL, O_NONBLOCK)) {
-    fprintf(stderr, "fcntl(): %s\n", strerror(errno));
+    ERROR("fcntl() failed for %s - %s\n", comp->name, strerror(errno));
     return -1;
   }
 
@@ -273,7 +282,7 @@ static int start_component(Component *comp) {
   if (strcmp(&comp->bin[bin_len - 3], ".sh") == 0) {
     script = fopen(full_path, "r");
     if (script == NULL) {
-      fprintf(stderr, "script not open: %s\n", strerror(errno));
+      ERROR("script not open for %s - %s\n", comp->name, strerror(errno));
       return -1;
     }
     fd_map[0] = dup(fileno(script));
@@ -284,22 +293,22 @@ static int start_component(Component *comp) {
   fd_map[1] = dup(c_stdout[1]);
   fd_map[2] = dup(c_stdout[1]);
 
-  printf("fd_map[0]=%d, fd_map[1]=%d, fd_map[2]=%d\n",
-         fd_map[0], fd_map[1], fd_map[2]);
+  DEBUG("%s fd_map[0]=%d, fd_map[1]=%d, fd_map[2]=%d\n",
+        comp->name, fd_map[0], fd_map[1], fd_map[2]);
 
   comp->pid = spawn(full_path, fd_count, fd_map, &inherit, NULL, NULL);
   if (comp->pid == -1) {
-    fprintf(stderr, "spawn(): %s\n", strerror(errno));
+    ERROR("spawn() failed for %s - %s\n", comp->name, strerror(errno));
     return -1;
   }
 
   comp->output = c_stdout[0];
   close(c_stdout[1]);
 
-  printf("a new process started with PID = %d\n", comp->pid);
+  INFO("process with PID = %d started for comp %s\n", comp->pid, comp->name);
 
   if (pthread_create(&comp->comm_thid, NULL, handle_comp_comm, comp) != 0) {
-    fprintf(stderr, "pthread_create(): %s\n", strerror(errno));
+    ERROR("comm thread not started for %s - %s\n", comp->name, strerror(errno));
     return -1;
   }
 
@@ -308,13 +317,23 @@ static int start_component(Component *comp) {
 
 static int start_components(void) {
 
+  INFO("starting components\n");
+
+  int rc = 0;
+
   for (size_t i = 0; i < context.count; i++) {
     if (start_component(&context.children[i])) {
-      return -1;
+      rc = -1;
     }
   }
 
-  return 0;
+  if (rc) {
+    WARN("not all components started\n");
+  } else {
+    INFO("components started\n");
+  }
+
+  return rc;
 }
 
 static int stop_component(Component *comp) {
@@ -323,31 +342,44 @@ static int stop_component(Component *comp) {
     return 0;
   }
 
-  printf("about to stop component \'%s\' with PID = %d\n",
-         comp->name, comp->pid);
+  DEBUG("about to stop component %s(%d)\n", comp->name, comp->pid);
 
   if (!kill(comp->pid, SIGINT)) {
 
     if (pthread_join(comp->comm_thid, NULL) != 0) {
-      fprintf(stderr, "pthread_create() failed for \'%s\': %s\n",
-              comp->name, strerror(errno));
+      ERROR("pthread_join() failed for %s comm thread - %s\n",
+            comp->name, strerror(errno));
       return -1;
     }
 
   } else {
-    fprintf(stderr, "kill(): %s\n", strerror(errno));
+    ERROR("kill() failed for %s - %s\n", comp->name, strerror(errno));
     return -1;
   }
 
   comp->pid = -1;
+
+  INFO("component %s(%d) stopped\n", comp->name, comp->pid);
 
   return 0;
 }
 
 static int stop_components(void) {
 
+  INFO("stopping components\n");
+
+  int rc = 0;
+
   for (size_t i = 0; i < context.count; i++) {
-    stop_component(&context.children[i]);
+    if (stop_component(&context.children[i])) {
+      rc = -1;
+    }
+  }
+
+  if (rc) {
+    WARN("not all components stopped\n");
+  } else {
+    INFO("components stopped\n");
   }
 
   return 0;
@@ -366,12 +398,13 @@ static Component *find_comp(const char *name) {
 
 #define CMD_START "START"
 #define CMD_STOP  "STOP"
+#define CMD_DISP  "DISP"
 
 static int handle_start(const char *comp_name) {
 
   Component *comp = find_comp(comp_name);
   if (comp == NULL) {
-    fprintf(stderr, "component \'%s\' not found\n", comp_name);
+    WARN("component %s not found\n", comp_name);
     return -1;
   }
 
@@ -384,7 +417,7 @@ static int handle_stop(const char *comp_name) {
 
   Component *comp = find_comp(comp_name);
   if (comp == NULL) {
-    fprintf(stderr, "component \'%s\' not found\n", comp_name);
+    WARN("component %s not found\n", comp_name);
     return -1;
   }
 
@@ -422,7 +455,7 @@ static char *get_cmd_val(const char *cmd, char *buff, size_t buff_len) {
 
 static void *handle_console(void *args) {
 
-  printf("starting the console listener\n");
+  INFO("starting console listener\n");
 
   while (true) {
 
@@ -433,12 +466,13 @@ static void *handle_console(void *args) {
     int cmd_type = 0;
 
     if (__console2(&cons, mod_cmd, &cmd_type)) {
-      fprintf(stderr, "__console2(): %s\n", strerror(errno));
+      ERROR("__console2() - %s\n", strerror(errno));
       pthread_exit(NULL);
     }
 
     if (cmd_type == _CC_modify) {
-      printf("console command = \'%s\'\n", mod_cmd);
+
+      INFO("command \'%s\' received\n", mod_cmd);
 
       char cmd_val[128] = {0};
 
@@ -447,35 +481,44 @@ static void *handle_console(void *args) {
         if (val != NULL) {
           handle_start(val);
         } else {
-          fprintf(stderr, "bad value, command ignored\n");
+          ERROR("bad value, command ignored\n");
         }
-      }
-
-      if (strstr(mod_cmd, CMD_STOP) == mod_cmd) {
+      } else if (strstr(mod_cmd, CMD_STOP) == mod_cmd) {
         char *val = get_cmd_val(mod_cmd, cmd_val, sizeof(cmd_val));
         if (val != NULL) {
           handle_stop(val);
         } else {
-          fprintf(stderr, "bad value, command ignored\n");
+          ERROR("bad value, command ignored\n");
         }
+      } else if (strstr(mod_cmd, CMD_DISP) == mod_cmd) {
+        char *val = get_cmd_val(mod_cmd, cmd_val, sizeof(cmd_val));
+        if (val != NULL) {
+          handle_stop(val);
+        } else {
+          ERROR("bad value, command ignored\n");
+        }
+      } else {
+        WARN("command not recognized\n");
       }
 
-
     } else if (cmd_type == _CC_stop) {
-      printf("termination command sent\n");
-      stop_components();
+      INFO("termination command received\n");
       break;
     }
 
   }
+
+  INFO("console listener stopped\n");
 
   return NULL;
 }
 
 static int start_console_tread(void) {
 
+  INFO("starting console thread\n");
+
   if (pthread_create(&context.console_thid, NULL, handle_console, NULL) != 0) {
-    fprintf(stderr, "pthread_create(): %s\n", strerror(errno));
+    ERROR("pthread_created() for console listener - %s\n", strerror(errno));
     return -1;
   }
 
@@ -485,16 +528,18 @@ static int start_console_tread(void) {
 static int stop_console_thread(void) {
 
   if (pthread_join(context.console_thid, NULL) != 0) {
-    fprintf(stderr, "pthread_create(): %s\n", strerror(errno));
+    ERROR("pthread_join() for console listener - %s\n", strerror(errno));
     return -1;
   }
+
+  INFO("console thread stopped\n");
 
   return 0;
 }
 
 int main(int argc, char **argv) {
 
-  printf("starting console thread\n");
+  INFO("Zowe Launcher starting\n");
 
   if (init_context()) {
     exit(EXIT_FAILURE);
@@ -513,6 +558,10 @@ int main(int argc, char **argv) {
   if (stop_console_thread()) {
     exit(EXIT_FAILURE);
   }
+
+  stop_components();
+
+  INFO("Zowe Launcher stopped\n");
 
   exit(EXIT_SUCCESS);
 }
