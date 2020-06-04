@@ -357,9 +357,8 @@ static int stop_component(Component *comp) {
     return -1;
   }
 
-  comp->pid = -1;
-
   INFO("component %s(%d) stopped\n", comp->name, comp->pid);
+  comp->pid = -1;
 
   return 0;
 }
