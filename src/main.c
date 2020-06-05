@@ -244,7 +244,7 @@ static void *handle_comp_comm(void *args) {
 
         while (next_line) {
           char *tm = gettime().value;
-          printf("%s %s(%d): %s\n", tm, comp->name, comp->pid, next_line);
+          printf("%s CMSG:  %s(%d) - %s\n", tm, comp->name, comp->pid, next_line);
           next_line = strtok(NULL, "\n");
         }
 
@@ -289,7 +289,12 @@ static int start_component(ZlComp *comp) {
 
   DEBUG("about to start component %s at \'%s\'\n", comp->name, full_path);
 
-  struct inheritance inherit = {0};
+  // ensure the new process has its own process group ID so we can terminate
+  // the entire process tree
+  struct inheritance inherit = {
+      .flags = (short) SPAWN_SETGROUP,
+      .pgroup = SPAWN_NEWPGROUP,
+  };
 
   FILE *script = NULL;
   int c_stdout[2];
@@ -369,9 +374,11 @@ static int stop_component(ZlComp *comp) {
     return 0;
   }
 
-  DEBUG("about to stop component %s(%d)\n", comp->name, comp->pid);
+  DEBUG("about to stop component %s(%d) and its children\n",
+        comp->name, comp->pid);
 
-  if (!kill(comp->pid, SIGINT)) {
+  pid_t pgid = -comp->pid;
+  if (!kill(pgid, SIGINT)) {
 
     if (pthread_join(comp->comm_thid, NULL) != 0) {
       ERROR("pthread_join() failed for %s comm thread - %s\n",
