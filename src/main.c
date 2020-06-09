@@ -28,23 +28,6 @@
 #include <sys/__messag.h>
 #include <unistd.h>
 
-//  //ZLAUNCH  JOB  USER=&SYSUID,NOTIFY=&SYSUID
-//  //ZLAUNCH  EXEC PGM=ZLAUNCH,REGION=0M,
-//  // PARM='ENVAR(_CEE_ENVFILE=DD:STDENV)/'
-//  //STEPLIB  DD   DSNAME=&SYSUID..DEV.LOADLIB,DISP=SHR
-//  //PARMLIB  DD   DSNAME=&SYSUID..DEV.PARMLIB,DISP=SHR
-//  //SYSIN    DD   DUMMY
-//  //SYSPRINT DD   SYSOUT=*
-//  //SYSERR   DD   SYSOUT=*
-//  //CEEOPTS  DD  *
-//  RPTOPTS(ON)
-//  POSIX(ON)
-//  /*
-//  //STDENV   DD  *
-//  WORKDIR=/u/user/zowe-launcher/bin
-//  /*
-//
-
 // a REST endpoint? Zowe CLI?
 
 typedef struct ZlTime {
