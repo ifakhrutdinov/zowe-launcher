@@ -10,17 +10,10 @@
 #  Copyright Contributors to the Zowe Project.
 ################################################################################
 
-echo "hello from shell test 2"
+set -e
 
-ls .
+. zowe.conf
 
-java foobar
+export ZOWE_INIT_COMPONENTS=explorer-jes
 
-while true
-do
-  echo "Doing shell script component test 2"
-  sleep 10
-done
-
-echo "leaving shell test 2"
-
+/bin/sh ${ZOWE_INSTANCE_DIR}/bin/zowe-start.sh

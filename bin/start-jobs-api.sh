@@ -10,13 +10,10 @@
 #  Copyright Contributors to the Zowe Project.
 ################################################################################
 
-echo "hello from shell test 1"
+set -e
 
-while true
-do
-  echo "Doing shell script component test 1"
-  sleep 5
-done
+. zowe.conf
 
-echo "leaving shell test 1"
+export ZOWE_INIT_COMPONENTS=jobs-api
 
+/bin/sh ${ZOWE_INSTANCE_DIR}/bin/zowe-start.sh
