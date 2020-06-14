@@ -10,7 +10,7 @@
 #  Copyright Contributors to the Zowe Project.
 ################################################################################
 
-set -e
+set -eu
 
 . zowe.conf
 

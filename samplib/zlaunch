@@ -1,3 +1,4 @@
+//ZLAUNCH  JOB  USER=&SYSUID,NOTIFY=&SYSUID 
 //********************************************************************/
 //* This program and the accompanying materials are                  */
 //* made available under the terms of the                            */
@@ -9,7 +10,6 @@
 //*                                                                  */
 //* Copyright Contributors to the Zowe Project.                      */
 //********************************************************************/
-//ZLAUNCH  JOB  USER=&SYSUID,NOTIFY=&SYSUID 
 //ZLAUNCH  EXEC PGM=ZLAUNCH,REGION=0M,
 // PARM='ENVAR(_CEE_ENVFILE=DD:STDENV)/'
 //STEPLIB  DD   DSNAME=&SYSUID..DEV.LOADLIB,DISP=SHR
@@ -22,5 +22,5 @@ RPTOPTS(ON)
 POSIX(ON)
 /*
 //STDENV   DD  *
-WORKDIR=/u/user/zowe-launcher/bin
+WORKDIR=/u/user/zowe-launcher
 /*
