@@ -57,13 +57,13 @@ P ZLAUNCH
 ```
 * To stop a specific component use the following modify command:
 ```
-S ZLAUNCH,APPL=STOP(component_name)
+F ZLAUNCH,APPL=STOP(component_name)
 ```
 * To start a specific component use the following modify command:
 ```
-S ZLAUNCH,APPL=START(component_name)
+F ZLAUNCH,APPL=START(component_name)
 ```
 * To list the components use the following modify command:
 ```
-S ZLAUNCH,APPL=DISP
+F ZLAUNCH,APPL=DISP
 ```
