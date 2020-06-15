@@ -68,6 +68,6 @@ F ZLAUNCH,APPL=START(component_name)
 F ZLAUNCH,APPL=DISP
 ```
 
-## Related issues
-* zowe/zowe-install-packaging#1137
-* zowe/zowe-install-packaging#790
+## The project should fix the following issues
+* https://github.com/zowe/zowe-install-packaging/issues/1137
+* https://github.com/zowe/zowe-install-packaging/issues/790
