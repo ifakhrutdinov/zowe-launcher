@@ -37,7 +37,7 @@ The launcher binary will be saved into the bin directory.
 
 * Specify the Zowe installation and instance directories in `zowe.conf`
 * Run `patch-zowe.sh` to apply the require Zowe changes
-* Copy the launcher JCL (`samplib/zlaunch`) to a PDS/PDSE data set (the job can be easily converted to a started task)
+* Copy the launcher JCL (`samplib/zlaunch`) to your PROCLIB
 * Edit the JCL and specify the launcher directory in the WORKDIR variable
 
 ## Component configuration
@@ -46,8 +46,7 @@ Edit `components.conf` to add and remove components. The configuration consists 
 
 ## Operating the launcher
 
-* To start the launcher submit the launcher JCL
-Alternatively, use the `S` operator command if you're using it as a started task:
+* To start the launcher use the `S` operator command:
 ```
 S ZLAUNCH
 ```
