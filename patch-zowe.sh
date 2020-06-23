@@ -16,6 +16,7 @@ set -eu
 
 cd ./patches
 
+patch -i instance.patch $ZOWE_INSTANCE_DIR/instance.env
 patch -i zowe-start.patch $ZOWE_INSTANCE_DIR/bin/zowe-start.sh
 patch -i run-zowe.patch $ZOWE_INSTALL_DIR/bin/internal/run-zowe.sh
 patch -i api-mediation_start.patch $ZOWE_INSTALL_DIR/components/api-mediation/bin/start.sh
