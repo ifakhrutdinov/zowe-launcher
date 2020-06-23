@@ -361,7 +361,7 @@ static int stop_component(ZlComp *comp) {
         comp->name, comp->pid);
 
   pid_t pgid = -comp->pid;
-  if (!kill(pgid, SIGINT)) {
+  if (!kill(pgid, SIGTERM)) {
 
     if (pthread_join(comp->comm_thid, NULL) != 0) {
       ERROR("pthread_join() failed for %s comm thread - %s\n",
