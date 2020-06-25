@@ -1,6 +1,9 @@
 # Prerequisites
 *.d
 
+# Executables
+bin/zowe_launcher
+
 # Object files
 *.o
 *.ko
@@ -41,6 +44,7 @@
 *.su
 *.idb
 *.pdb
+*.lst
 
 # Kernel Module Compile Results
 *.mod*
