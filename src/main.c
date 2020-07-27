@@ -63,9 +63,18 @@ typedef struct ZlComp {
   pid_t pid;
   int output;
 
+  bool clean_stop;
+  int restart_cnt;
+
   pthread_t comm_thid;
 
 } ZlComp;
+
+enum ZLEvent {
+  ZL_EVENT_NONE = 0,
+  ZL_EVENT_TERM,
+  ZL_EVENT_COMP_RESTART,
+};
 
 // TODO globals are bad, make this a context struct and pass around
 struct {
@@ -78,6 +87,13 @@ struct {
   size_t count;
 
   ZlConfig config;
+
+  bool is_term;
+
+  enum ZLEvent event_type;
+  void *event_data;
+  pthread_cond_t event_cv;
+  pthread_mutex_t event_lock;
 
   char workdir[_POSIX_PATH_MAX + 1];
 
@@ -118,12 +134,24 @@ static int init_context(const struct ZlConfig *cfg) {
     return -1;
   }
 
+  if (pthread_cond_init(&context.event_cv, NULL) != 0) {
+    ERROR("pthread_cond_init() error - %s\n", strerror(errno));
+    return -1;
+  }
+
+  if (pthread_mutex_init(&context.event_lock, NULL) != 0) {
+    ERROR("pthread_mutex_init() error - %s\n", strerror(errno));
+    return -1;
+  }
+
   DEBUG("work directory is \'%s\'\n", context.workdir);
 
   return 0;
 }
 
 static int init_component(const char *cfg_line, ZlComp *result) {
+
+  /* TODO parsing of parameters is not overly robust, improve */
 
   const char *comp_start = cfg_line;
   const char *comp_end = strchr(cfg_line, '=');
@@ -141,7 +169,8 @@ static int init_component(const char *cfg_line, ZlComp *result) {
 
   const char *bin_start = comp_end + 1;
   const char *bin_end = bin_start + 1;
-  while (*bin_end != ' ' && *bin_end != '\0' && *bin_end != '\n') {
+  while (*bin_end != ' ' && *bin_end != '\0' && *bin_end != '\n'
+      && *bin_end != ',') {
     bin_end++;
   }
 
@@ -158,7 +187,17 @@ static int init_component(const char *cfg_line, ZlComp *result) {
   memcpy(result->name, comp_start, comp_len);
   memcpy(result->bin, bin_start, bin_len);
 
-  INFO("new component init'd \'%s\', \'%s\'\n", result->name, result->bin);
+  // any options?
+  if (*bin_end == ',') {
+    const char *opt_start = bin_end + 1;
+    const char *opt_end   = strchr(bin_end, '=');
+    if (opt_end && !strncmp(opt_start, "restart", opt_end - opt_start)) {
+      result->restart_cnt = atoi(opt_end + 1);
+    }
+  }
+
+  INFO("new component init'd \'%s\', \'%s\', restart_cnt=%d\n",
+       result->name, result->bin, result->restart_cnt);
 
   return 0;
 }
@@ -203,6 +242,8 @@ static int load_cfg(void) {
   return 0;
 }
 
+static int send_event(enum ZLEvent event_type, void *event_data);
+
 static void *handle_comp_comm(void *args) {
 
   INFO("starting a component communication thread\n");
@@ -217,6 +258,11 @@ static void *handle_comp_comm(void *args) {
       INFO("component %s(%d) terminated, status = %d\n",
            comp->name, comp->pid, comp_status);
       comp->pid = -1;
+
+      if (!comp->clean_stop && --comp->restart_cnt >= 0) {
+        send_event(ZL_EVENT_COMP_RESTART, comp);
+      }
+
       break;
     } else if (wait_rc == -1) {
       ERROR("waitpid failed for %s(%d) - %s\n",
@@ -331,6 +377,8 @@ static int start_component(ZlComp *comp) {
   comp->output = c_stdout[0];
   close(c_stdout[1]);
 
+  comp->clean_stop = false;
+
   INFO("process with PID = %d started for comp %s\n", comp->pid, comp->name);
 
   if (pthread_create(&comp->comm_thid, NULL, handle_comp_comm, comp) != 0) {
@@ -367,6 +415,8 @@ static int stop_component(ZlComp *comp) {
   if (comp->pid == -1) {
     return 0;
   }
+
+  comp->clean_stop = true;
 
   DEBUG("about to stop component %s(%d) and its children\n",
         comp->name, comp->pid);
@@ -536,6 +586,7 @@ static void *handle_console(void *args) {
 
     } else if (cmd_type == _CC_stop) {
       INFO("termination command received\n");
+      send_event(ZL_EVENT_TERM, NULL);
       break;
     }
 
@@ -610,6 +661,87 @@ static ZlConfig read_config(int argc, char **argv) {
   return result;
 }
 
+static int restart_component(ZlComp *comp) {
+
+  int stop_rc = stop_component(comp);
+  if (stop_rc) {
+    return stop_rc;
+  }
+
+  return start_component(comp);
+}
+
+static void monitor_events(void) {
+
+  if (pthread_mutex_lock(&context.event_lock) != 0) {
+    ERROR("monitor_events: pthread_mutex_lock() error - %s\n", strerror(errno));
+    return;
+  }
+
+  while (true) {
+
+    while (context.event_type == ZL_EVENT_NONE) {
+      if (pthread_cond_wait(&context.event_cv, &context.event_lock) !=0) {
+        ERROR("monitor_events: pthread_cond_wait() error - %s\n",
+              strerror(errno));
+        return;
+      }
+    }
+
+    DEBUG("event with type %d and data 0x%p has been received\n",
+          context.event_type, context.event_data);
+
+    if (context.event_type == ZL_EVENT_TERM) {
+      break;
+    } else if (context.event_type == ZL_EVENT_COMP_RESTART) {
+      int restart_rc = restart_component(context.event_data);
+      if (restart_rc) {
+        ERROR("component not restarted, rc = %d\n", restart_rc);
+      }
+    } else {
+      ERROR("unknown event type %d\n", context.event_type);
+      break;
+    }
+
+    context.event_type = ZL_EVENT_NONE;
+    context.event_data = NULL;
+
+  }
+
+  if (pthread_mutex_unlock(&context.event_lock) != 0) {
+    ERROR("monitor_events: pthread_mutex_unlock() error - %s\n",
+          strerror(errno));
+    return;
+  }
+
+}
+
+static int send_event(enum ZLEvent event_type, void *event_data) {
+
+  if (pthread_mutex_lock(&context.event_lock) != 0) {
+    ERROR("send_event: pthread_mutex_lock() error - %s\n", strerror(errno));
+    return -1;
+  }
+
+  context.event_type = event_type;
+  context.event_data = event_data;
+
+  if (pthread_cond_signal(&context.event_cv) != 0) {
+    ERROR("send_event: pthread_cond_signal() error - %s\n", strerror(errno));
+    return -1;
+  }
+
+  DEBUG("event with type %d and data 0x%p has been sent\n",
+        context.event_type, context.event_data);
+
+  if (pthread_mutex_unlock(&context.event_lock) != 0) {
+    ERROR("send_event: pthread_mutex_unlock() error - %s\n", strerror(errno));
+    return -1;
+  }
+
+  return 0;
+}
+
 int main(int argc, char **argv) {
 
   INFO("Zowe Launcher starting\n");
@@ -629,6 +761,8 @@ int main(int argc, char **argv) {
   if (start_console_tread()) {
     exit(EXIT_FAILURE);
   }
+
+  monitor_events();
 
   if (stop_console_thread()) {
     exit(EXIT_FAILURE);
