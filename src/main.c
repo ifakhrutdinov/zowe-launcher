@@ -62,7 +62,9 @@ typedef struct ZlComp {
   char bin[_POSIX_PATH_MAX + 1];
   pid_t pid;
   int output;
+  bool is_terminated_by_command;
 
+  pthread_mutex_t lock;
   pthread_t comm_thid;
 
 } ZlComp;
@@ -74,7 +76,7 @@ struct {
 
 #define MAX_CHILD_COUNT 128
 
-  ZlComp children[MAX_CHILD_COUNT];
+  ZlComp *children[MAX_CHILD_COUNT];
   size_t count;
 
   ZlConfig config;
@@ -89,7 +91,12 @@ struct {
   printf("%s DEBUG: "fmt, gettime().value, ##__VA_ARGS__)
 #define ERROR(fmt, ...) printf("%s ERROR: "fmt, gettime().value, ##__VA_ARGS__)
 
-static int init_context(const struct ZlConfig *cfg) {
+static int start_component(ZlComp *comp, bool start_comm_thread);
+static int stop_component(ZlComp *comp);
+static int lock_component(ZlComp *comp);
+static int unlock_component(ZlComp *comp);
+
+static int init_context(ZlConfig *cfg) {
 
   const char *workdir = getenv("WORKDIR");
   if (workdir == NULL) {
@@ -158,9 +165,46 @@ static int init_component(const char *cfg_line, ZlComp *result) {
   memcpy(result->name, comp_start, comp_len);
   memcpy(result->bin, bin_start, bin_len);
 
+  if (pthread_mutex_init(&result->lock, NULL) != 0) {
+    ERROR("mutex not initialized for %s - %s\n", result->name, strerror(errno));
+    return -1;
+  }
+
   INFO("new component init'd \'%s\', \'%s\'\n", result->name, result->bin);
 
   return 0;
+}
+
+static int lock_component(ZlComp *comp) {
+  DEBUG("about to lock component %s\n", comp->name);
+  int rc = pthread_mutex_lock(&comp->lock);
+  if (rc != 0) {
+    ERROR("component %s not locked - %s\n", comp->name, strerror(errno));
+    return -1;
+  }
+  return 0;
+}
+
+static int unlock_component(ZlComp *comp) {
+  DEBUG("about to unlock component %s\n", comp->name);
+  if (pthread_mutex_unlock(&comp->lock) != 0) {
+    ERROR("component %s not unlocked - %s\n", comp->name, strerror(errno));
+    return -1;
+  }
+  return 0;
+}
+
+static bool is_commented_out(const char *line) {
+  for (size_t i = 0; i < strlen(line); i++) {
+    if (line[i] == ' ') {
+      continue;
+    }
+    if (line[i] == '#') {
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 static int load_cfg(void) {
@@ -184,8 +228,13 @@ static int load_cfg(void) {
     }
 
     DEBUG("handling line \'%s\'\n", line);
-    ZlComp comp = {0};
-    if (!init_component(line, &comp)) {
+    if (is_commented_out(line)) {
+      DEBUG("line \'%s\' is commented out\n", line);
+      continue;
+    }
+    ZlComp *comp = (ZlComp*) malloc(sizeof(*comp));
+    memset(comp, 0, sizeof(*comp));
+    if (!init_component(line, comp)) {
       if (context.count != MAX_CHILD_COUNT) {
         context.children[context.count++] = comp;
       } else {
@@ -211,16 +260,22 @@ static void *handle_comp_comm(void *args) {
 
   while (true) {
 
+    lock_component(comp);
+    if (comp->is_terminated_by_command) {
+      unlock_component(comp);
+      break;
+    }
     int comp_status = 0;
     int wait_rc = waitpid(comp->pid, &comp_status, WNOHANG);
     if (wait_rc == comp->pid) {
       INFO("component %s(%d) terminated, status = %d\n",
            comp->name, comp->pid, comp_status);
       comp->pid = -1;
-      break;
+      start_component(comp, false);
     } else if (wait_rc == -1) {
       ERROR("waitpid failed for %s(%d) - %s\n",
             comp->name, comp->pid, strerror(errno));
+      unlock_component(comp);
       break;
     } else {
 //      DEBUG("waitpid RC = 0 for %s(%d)\n", comp->name, comp->pid);
@@ -253,13 +308,14 @@ static void *handle_comp_comm(void *args) {
       }
 
     }
+    unlock_component(comp);
 
   }
 
   return NULL;
 }
 
-static int start_component(ZlComp *comp) {
+static int start_component(ZlComp *comp, bool start_comm_thread) {
 
   if (comp->pid != -1) {
     ERROR("cannot start component %s - already running\n", comp->name);
@@ -332,10 +388,12 @@ static int start_component(ZlComp *comp) {
   close(c_stdout[1]);
 
   INFO("process with PID = %d started for comp %s\n", comp->pid, comp->name);
-
-  if (pthread_create(&comp->comm_thid, NULL, handle_comp_comm, comp) != 0) {
-    ERROR("comm thread not started for %s - %s\n", comp->name, strerror(errno));
-    return -1;
+  comp->is_terminated_by_command = false;
+  if (start_comm_thread) {
+    if (pthread_create(&comp->comm_thid, NULL, handle_comp_comm, comp) != 0) {
+      ERROR("comm thread not started for %s - %s\n", comp->name, strerror(errno));
+      return -1;
+    }
   }
 
   return 0;
@@ -348,7 +406,7 @@ static int start_components(void) {
   int rc = 0;
 
   for (size_t i = 0; i < context.count; i++) {
-    if (start_component(&context.children[i])) {
+    if (start_component(context.children[i], true)) {
       rc = -1;
     }
   }
@@ -398,7 +456,7 @@ static int stop_components(void) {
   int rc = 0;
 
   for (size_t i = 0; i < context.count; i++) {
-    if (stop_component(&context.children[i])) {
+    if (stop_component(context.children[i])) {
       rc = -1;
     }
   }
@@ -415,12 +473,25 @@ static int stop_components(void) {
 static ZlComp *find_comp(const char *name) {
 
   for (size_t i = 0; i < context.count; i++) {
-    if (!strcmp(name, context.children[i].name)) {
-      return &context.children[i];
+    if (!strcmp(name, context.children[i]->name)) {
+      return context.children[i];
     }
   }
 
   return NULL;
+}
+
+static void free_components() {
+  for (size_t i = 0; i < context.count; i++) {
+    ZlComp *comp = context.children[i];
+    if (comp) {
+      if (pthread_mutex_destroy(&comp->lock) != 0) {
+        ERROR("unable to destroy mutex for comp %s - %s\n", comp->name, strerror(errno));
+      }
+      free(comp);
+      context.children[i] = NULL;
+    }
+  }
 }
 
 #define CMD_START "START"
@@ -435,7 +506,9 @@ static int handle_start(const char *comp_name) {
     return -1;
   }
 
-  start_component(comp);
+  lock_component(comp);
+  start_component(comp, true);
+  unlock_component(comp);
 
   return 0;
 }
@@ -448,7 +521,10 @@ static int handle_stop(const char *comp_name) {
     return -1;
   }
 
+  lock_component(comp);
   stop_component(comp);
+  comp->is_terminated_by_command = true;
+  unlock_component(comp);
 
   return 0;
 }
@@ -457,8 +533,8 @@ static int handle_disp(void) {
 
   INFO("launcher has the following components:\n");
   for (size_t i = 0; i < context.count; i++) {
-    INFO("    name = %16.16s, PID = %d\n", context.children[i].name,
-         context.children[i].pid);
+    INFO("    name = %16.16s, PID = %d\n", context.children[i]->name,
+         context.children[i]->pid);
   }
 
   return 0;
@@ -635,6 +711,7 @@ int main(int argc, char **argv) {
   }
 
   stop_components();
+  free_components();
 
   INFO("Zowe Launcher stopped\n");
 
