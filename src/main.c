@@ -30,6 +30,9 @@
 
 // a REST endpoint? Zowe CLI?
 
+#define CONFIG_DEBUG_MODE_KEY     "ZLDEBUG"
+#define CONFIG_DEBUG_MODE_VALUE   "ON"
+
 typedef struct ZlTime {
   char value[32];
 } ZlTime;
@@ -49,10 +52,9 @@ static ZlTime gettime(void) {
   return result;
 }
 
-#define INFO(fmt, ...)  printf("%s INFO:  "fmt, gettime().value, ##__VA_ARGS__)
-#define WARN(fmt, ...)  printf("%s WARN:  "fmt, gettime().value, ##__VA_ARGS__)
-#define DEBUG(fmt, ...) printf("%s DEBUG: "fmt, gettime().value, ##__VA_ARGS__)
-#define ERROR(fmt, ...) printf("%s ERROR: "fmt, gettime().value, ##__VA_ARGS__)
+typedef struct ZlConfig {
+  bool debug_mode;
+} ZlConfig;
 
 typedef struct ZlComp {
 
@@ -75,11 +77,19 @@ struct {
   ZlComp children[MAX_CHILD_COUNT];
   size_t count;
 
+  ZlConfig config;
+
   char workdir[_POSIX_PATH_MAX + 1];
 
 } context = {0};
 
-static int init_context(void) {
+#define INFO(fmt, ...)  printf("%s INFO:  "fmt, gettime().value, ##__VA_ARGS__)
+#define WARN(fmt, ...)  printf("%s WARN:  "fmt, gettime().value, ##__VA_ARGS__)
+#define DEBUG(fmt, ...) if (context.config.debug_mode) \
+  printf("%s DEBUG: "fmt, gettime().value, ##__VA_ARGS__)
+#define ERROR(fmt, ...) printf("%s ERROR: "fmt, gettime().value, ##__VA_ARGS__)
+
+static int init_context(const struct ZlConfig *cfg) {
 
   const char *workdir = getenv("WORKDIR");
   if (workdir == NULL) {
@@ -101,6 +111,7 @@ static int init_context(void) {
 
   memset(context.workdir, 0, sizeof(context.workdir));
   memcpy(context.workdir, dir_start, dir_len);
+  context.config = *cfg;
 
   if (chdir(context.workdir)) {
     ERROR("working directory not changed - %s\n", strerror(errno));
@@ -559,11 +570,53 @@ static int stop_console_thread(void) {
   return 0;
 }
 
+/**
+ * @brief Compare space padded strings
+ * @param s1 String 1
+ * @param s2 String 2
+ * @return 0 if equal, otherwise difference between the first non blank
+ * characters
+ */
+static int strcmp_pad(const char *s1, const char *s2) {
+
+  for (; *s1 == *s2; s1++, s2++) {
+    if (*s1 == '\0') {
+      return 0;
+    }
+  }
+
+  if (*s1 == '\0') {
+    while (*s2 == ' ') { s2++; }
+    return -(unsigned) *s2;
+  } else if (*s2 == '\0') {
+    while (*s1 == ' ') { s1++; }
+    return (unsigned) *s1;
+  } else {
+    return (unsigned) *s1 - (unsigned) *s2;
+  }
+
+}
+
+static ZlConfig read_config(int argc, char **argv) {
+
+  ZlConfig result = {0};
+
+  char *debug_value = getenv(CONFIG_DEBUG_MODE_KEY);
+
+  if (debug_value && !strcmp_pad(debug_value, CONFIG_DEBUG_MODE_VALUE)) {
+    result.debug_mode = true;
+  }
+
+  return result;
+}
+
 int main(int argc, char **argv) {
 
   INFO("Zowe Launcher starting\n");
 
-  if (init_context()) {
+  ZlConfig config = read_config(argc, argv);
+
+  if (init_context(&config)) {
     exit(EXIT_FAILURE);
   }
 
