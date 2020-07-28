@@ -33,6 +33,8 @@
 #define CONFIG_DEBUG_MODE_KEY     "ZLDEBUG"
 #define CONFIG_DEBUG_MODE_VALUE   "ON"
 
+#define MIN_UPTIME_SECS 90
+
 typedef struct ZlTime {
   char value[32];
 } ZlTime;
@@ -65,6 +67,8 @@ typedef struct ZlComp {
 
   bool clean_stop;
   int restart_cnt;
+  int fail_cnt;
+  time_t start_time;
 
   pthread_t comm_thid;
 
@@ -202,6 +206,19 @@ static int init_component(const char *cfg_line, ZlComp *result) {
   return 0;
 }
 
+static bool is_commented_out(const char *line) {
+  for (size_t i = 0; i < strlen(line); i++) {
+    if (line[i] == ' ') {
+      continue;
+    }
+    if (line[i] == '#') {
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
 static int load_cfg(void) {
 
   FILE *cfg;
@@ -220,6 +237,11 @@ static int load_cfg(void) {
       if (line[i] == '\n') {
         line[i] = ' ';
       }
+    }
+
+    if (is_commented_out(line)) {
+      DEBUG("line \'%s\' is commented out\n", line);
+      continue;
     }
 
     DEBUG("handling line \'%s\'\n", line);
@@ -258,8 +280,13 @@ static void *handle_comp_comm(void *args) {
       INFO("component %s(%d) terminated, status = %d\n",
            comp->name, comp->pid, comp_status);
       comp->pid = -1;
-
-      if (!comp->clean_stop && --comp->restart_cnt >= 0) {
+      time_t uptime = time(NULL) - comp->start_time;
+      if (uptime > MIN_UPTIME_SECS) {
+        comp->fail_cnt = 1;
+      } else {
+        comp->fail_cnt++;
+      }
+      if (!comp->clean_stop && (comp->fail_cnt < comp->restart_cnt)) {
         send_event(ZL_EVENT_COMP_RESTART, comp);
       }
 
@@ -374,6 +401,7 @@ static int start_component(ZlComp *comp) {
     return -1;
   }
 
+  comp->start_time = time(NULL);
   comp->output = c_stdout[0];
   close(c_stdout[1]);
 
@@ -485,6 +513,7 @@ static int handle_start(const char *comp_name) {
     return -1;
   }
 
+  comp->fail_cnt = 0;
   start_component(comp);
 
   return 0;
