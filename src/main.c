@@ -28,7 +28,13 @@
 #include <sys/__messag.h>
 #include <unistd.h>
 
-// a REST endpoint? Zowe CLI?
+/*
+ * TODO:
+ * - Better process monitoring and clean up. For example, can we find all the
+ * child processes of a component? How do we clean up the forks of a
+ * killed process?
+ * - a REST endpoint? Zowe CLI?
+ */
 
 #define CONFIG_DEBUG_MODE_KEY     "ZLDEBUG"
 #define CONFIG_DEBUG_MODE_VALUE   "ON"
